@@ -1,1 +1,2 @@
-# wallhaven-plugin
+# Wallhaven Plugin
+
