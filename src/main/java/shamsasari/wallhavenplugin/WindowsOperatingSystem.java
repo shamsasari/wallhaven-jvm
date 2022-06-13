@@ -1,3 +1,5 @@
+package shamsasari.wallhavenplugin;
+
 import jdk.incubator.foreign.*;
 
 import java.lang.invoke.MethodHandle;
@@ -5,7 +7,7 @@ import java.nio.file.Path;
 
 import static jdk.incubator.foreign.ValueLayout.*;
 
-public class SetWallpaper {
+public class WindowsOperatingSystem {
     private static final int SPI_SETDESKWALLPAPER  = 0x0014;
     private static final int SPIF_UPDATEINIFILE    = 0x01;
     private static final int SPIF_SENDCHANGE       = 0x02;
@@ -21,14 +23,15 @@ public class SetWallpaper {
         );
     }
 
-    public static void set(Path file) {
+    public static void setWallpaper(Path file) {
+        // TODO Use Fill Fit
         try (ResourceScope scope = ResourceScope.newConfinedScope()) {
             SegmentAllocator allocator = SegmentAllocator.nativeAllocator(scope);
-            Addressable cString = allocator.allocateUtf8String(file.toString());
+            Addressable nativeFilePath = allocator.allocateUtf8String(file.toString());
             var result = (boolean)systemParametersInfoAFunction.invokeExact(
                     SPI_SETDESKWALLPAPER,
                     0,
-                    cString,
+                    nativeFilePath,
                     SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
             );
             if (!result) {
