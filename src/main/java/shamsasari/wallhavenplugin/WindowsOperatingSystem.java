@@ -8,9 +8,9 @@ import java.nio.file.Path;
 import static jdk.incubator.foreign.ValueLayout.*;
 
 public class WindowsOperatingSystem {
-    private static final int SPI_SETDESKWALLPAPER  = 0x0014;
-    private static final int SPIF_UPDATEINIFILE    = 0x01;
-    private static final int SPIF_SENDCHANGE       = 0x02;
+    private static final int SPI_SETDESKWALLPAPER = 0x0014;
+    private static final int SPIF_UPDATEINIFILE   = 0x01;
+    private static final int SPIF_SENDCHANGE      = 0x02;
 
     private static final MethodHandle systemParametersInfoAFunction;
 
@@ -24,7 +24,6 @@ public class WindowsOperatingSystem {
     }
 
     public static void setWallpaper(Path file) {
-        // TODO Use Fill Fit
         try (ResourceScope scope = ResourceScope.newConfinedScope()) {
             SegmentAllocator allocator = SegmentAllocator.nativeAllocator(scope);
             Addressable nativeFilePath = allocator.allocateUtf8String(file.toString());
