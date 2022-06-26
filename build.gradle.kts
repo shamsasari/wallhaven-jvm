@@ -27,5 +27,10 @@ application {
 }
 
 dependencies {
+    implementation("org.apache.logging.log4j:log4j-core:2.17.2")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.13.3")
+}
+
+tasks.shadowJar {
+    archiveClassifier.set("")
 }

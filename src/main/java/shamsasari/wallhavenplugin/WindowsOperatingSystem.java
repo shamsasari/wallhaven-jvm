@@ -34,7 +34,7 @@ public class WindowsOperatingSystem {
                     SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
             );
             if (!result) {
-                throw new IllegalStateException();
+                throw new IllegalStateException("Unable to set the wallpaper");
             }
         } catch (Error | RuntimeException t) {
             throw t;
