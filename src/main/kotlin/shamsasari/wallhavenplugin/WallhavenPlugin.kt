@@ -65,7 +65,7 @@ object WallhavenPlugin {
         val displayMode = GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.displayMode
 
         val q = config["q"]?.textValue()?.let { URLEncoder.encode(it, UTF_8) }
-        val excludeSimilarTags = config["excludeSimilarTags"]?.mapTo(HashSet()) { it.textValue().lowercase() } ?: emptySet()
+        val excludeSimilarTags = config["excludeSimilarTags"]?.map { it.textValue().lowercase() } ?: emptyList()
 
         var page = 0
         while (true) {
@@ -90,7 +90,8 @@ object WallhavenPlugin {
                 for (json in data) {
                     val id = json["id"].textValue()
                     val matching = httpClient.getWallpaperTags(id).all { tag ->
-                        tag["name"].textValue().lowercase() !in excludeSimilarTags
+                        val tagName = tag["name"].textValue().lowercase()
+                        excludeSimilarTags.all { it !in tagName }
                     }
                     if (matching) {
                         return json
