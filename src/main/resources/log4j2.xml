@@ -2,7 +2,7 @@
 <Configuration status="INFO">
   <Appenders>
     <File name="MainLog" fileName="${sys:app.home}/main.log">
-      <PatternLayout pattern="%d{HH:mm:ss} %msg%n"/>
+      <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss} %msg%n"/>
     </File>
   </Appenders>
   <Loggers>

@@ -3,6 +3,7 @@ package shamsasari.wallhavenplugin
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.json.JsonMapper
 import org.apache.logging.log4j.LogManager
+import org.apache.logging.log4j.Logger
 import java.awt.GraphicsEnvironment
 import java.io.InputStream
 import java.net.URI
@@ -15,9 +16,10 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import kotlin.io.path.*
+import kotlin.system.exitProcess
 
 object WallhavenPlugin {
-    private val logger by lazy { LogManager.getLogger("MainLog") }
+    private lateinit var logger: Logger
     private val jsonMapper = JsonMapper()
 
     @JvmStatic
@@ -26,7 +28,17 @@ object WallhavenPlugin {
         appHomeDir.createDirectories()
 
         System.setProperty("app.home", appHomeDir.toString())
+        logger = LogManager.getLogger("MainLog")
 
+        try {
+            run(appHomeDir)
+        } catch (t: Throwable) {
+            logger.fatal("Unable to update wallpaper", t)
+            exitProcess(1)
+        }
+    }
+
+    private fun run(appHomeDir: Path) {
         val configFile = appHomeDir / "wallhaven-plugin.json"
         val config = if (configFile.exists()) {
             jsonMapper.readTree(configFile.toFile())
@@ -68,8 +80,14 @@ object WallhavenPlugin {
         val excludeSimilarTags = config["excludeSimilarTags"]?.map { it.textValue().lowercase() } ?: emptyList()
 
         var page = 0
+        var seed: String? = null
+        var lastPage: Int? = null
         while (true) {
             page++
+            if (lastPage != null && page > lastPage) {
+                return null
+            }
+
             val randomWallpapersUrl = buildString {
                 append("https://wallhaven.cc/api/v1/search?resolutions=")
                     .append(displayMode.width).append('x').append(displayMode.height)
@@ -77,6 +95,9 @@ object WallhavenPlugin {
                     .append("&page=").append(page)
                 if (q != null) {
                     append("&q=").append(URLEncoder.encode(q, UTF_8))
+                }
+                if (seed != null) {
+                    append("&seed=").append(seed)
                 }
             }
 
@@ -87,6 +108,12 @@ object WallhavenPlugin {
             if (excludeSimilarTags.isEmpty()) {
                 return data[0]
             } else {
+                if (seed == null) {
+                    seed = response["meta"]["seed"].textValue()
+                }
+                if (lastPage == null) {
+                    lastPage = response["meta"]["last_page"].intValue()
+                }
                 for (json in data) {
                     val id = json["id"].textValue()
                     val matching = httpClient.getWallpaperTags(id).all { tag ->
@@ -111,5 +138,12 @@ object WallhavenPlugin {
         return send(HttpRequest.newBuilder(URI(url)).GET().build(), BodyHandlers.ofInputStream()).body()
     }
 
-    private fun HttpClient.getJson(url: String): JsonNode = get(url).use(jsonMapper::readTree)
+    private fun HttpClient.getJson(url: String): JsonNode {
+        val body = get(url).use { it.readAllBytes() }
+        try {
+            return jsonMapper.readTree(body)
+        } catch (e: Exception) {
+            throw IllegalStateException(body.decodeToString(), e)
+        }
+    }
 }
