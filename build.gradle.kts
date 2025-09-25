@@ -1,5 +1,4 @@
 plugins {
-    kotlin("jvm") version "2.2.20"
     application
 }
 
@@ -9,13 +8,18 @@ repositories {
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(24))
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
+tasks.withType<JavaCompile> {
+    options.compilerArgs = listOf("--enable-preview")
+}
+
 application {
-    mainClass.set("shamsasari.wallhavenplugin.WallhavenPlugin")
+    mainClass = "shamsasari.wallhavenplugin.Main"
     applicationDefaultJvmArgs = listOf(
+        "--enable-preview",
         "--enable-native-access=ALL-UNNAMED"
     )
 }
