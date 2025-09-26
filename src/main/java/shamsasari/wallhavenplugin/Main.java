@@ -7,7 +7,6 @@ import org.apache.logging.log4j.Logger;
 
 import java.awt.*;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLEncoder;
@@ -61,7 +60,7 @@ class Main {
             var wallpaperUrl = toUri(matchingWallpaper.get("path").textValue());
 
             var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(id);
-            Files.copy(get(httpClient, wallpaperUrl), wallpaperFile);
+            Files.write(wallpaperFile, get(httpClient, wallpaperUrl));
             WindowsOperatingSystem.setWallpaper(wallpaperFile);
         }
     }
@@ -137,19 +136,17 @@ class Main {
     }
 
     private JsonNode getJson(HttpClient httpClient, URI url) throws IOException {
-        try (var input = get(httpClient, url)) {
-            var body = input.readAllBytes();
-            try {
-                return jsonMapper.readTree(body);
-            } catch (Exception e) {
-                throw new IllegalStateException(new String(body), e);
-            }
+        byte[] bytes = get(httpClient, url);
+        try {
+            return jsonMapper.readTree(bytes);
+        } catch (IOException e) {
+            throw new IOException(new String(bytes), e);
         }
     }
 
-    private InputStream get(HttpClient httpClient, URI url) throws IOException {
+    private byte[] get(HttpClient httpClient, URI url) throws IOException {
         try {
-            return httpClient.send(HttpRequest.newBuilder(url).GET().build(), BodyHandlers.ofInputStream()).body();
+            return httpClient.send(HttpRequest.newBuilder(url).GET().build(), BodyHandlers.ofByteArray()).body();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(e);
