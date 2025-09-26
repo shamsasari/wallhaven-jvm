@@ -16,11 +16,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.function.Supplier;
 
-import static java.lang.Thread.startVirtualThread;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.stream.Collectors.joining;
 
 class Main {
     private static final Path appHomeDir = Path.of(System.getProperty("user.home")).resolve("wallhaven-plugin");
@@ -61,27 +60,9 @@ class Main {
             var id = matchingWallpaper.get("id").textValue();
             var wallpaperUrl = toUri(matchingWallpaper.get("path").textValue());
 
-            var setWallpaperThread = startVirtualThread(() -> {
-                try (var wallpaperStream = get(httpClient, wallpaperUrl)) {
-                    var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(id);
-                    Files.copy(wallpaperStream, wallpaperFile);
-                    WindowsOperatingSystem.setWallpaper(wallpaperFile);
-                } catch (IOException e) {
-                    logger().error("Could not set the wallpaper", e);
-                }
-            });
-
-            var tagsString = getWallpaperTags(httpClient, id)
-                    .valueStream()
-                    .map(tag -> tag.get("name").textValue() + " (" + tag.get("id").intValue() + ")")
-                    .collect(joining(", ", "[", "]"));
-
-            logger().info("Setting wallpaper {} {}", matchingWallpaper.get("url"), tagsString);
-
-            setWallpaperThread.join();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException(e);
+            var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(id);
+            Files.copy(get(httpClient, wallpaperUrl), wallpaperFile);
+            WindowsOperatingSystem.setWallpaper(wallpaperFile);
         }
     }
 
@@ -104,9 +85,8 @@ class Main {
                 return null;
             }
 
-            var randomWallpapersUrl = new StringBuilder("https://wallhaven.cc/api/v1/search?resolutions=")
+            var randomWallpapersUrl = new StringBuilder("https://wallhaven.cc/api/v1/search?sorting=random&atleast=")
                     .append(displayMode.getWidth()).append('x').append(displayMode.getHeight())
-                    .append("&sorting=random")
                     .append("&page=").append(page);
             if (q != null) {
                 randomWallpapersUrl.append("&q=").append(URLEncoder.encode(q.textValue(), UTF_8));
@@ -132,13 +112,10 @@ class Main {
                 }
                 for (var json : data) {
                     var id = json.get("id").textValue();
-                    var matching = getWallpaperTags(httpClient, id)
-                            .valueStream()
-                            .allMatch(tag -> {
-                                var tagName = tag.get("name").textValue().toLowerCase();
-                                return excludeSimilarTags.stream().noneMatch(tagName::contains);
-                            });
+                    List<String> tags = getWallpaperTags(httpClient, id);
+                    var matching = tags.stream().allMatch(tag -> excludeSimilarTags.stream().noneMatch(tag::contains));
                     if (matching) {
+                        logger().info("Setting wallpaper {} {}", json.get("url"), tags);
                         return json;
                     }
                     logger().info("{} does not match", json.get("url"));
@@ -148,8 +125,11 @@ class Main {
         }
     }
 
-    private JsonNode getWallpaperTags(HttpClient httpClient, String id) throws IOException {
-        return getWallpaperInfo(httpClient, id).get("data").get("tags");
+    private List<String> getWallpaperTags(HttpClient httpClient, String id) throws IOException {
+        return getWallpaperInfo(httpClient, id).get("data").get("tags")
+                .valueStream()
+                .map(tag -> tag.get("name").textValue().toLowerCase())
+                .toList();
     }
 
     private JsonNode getWallpaperInfo(HttpClient httpClient, String id) throws IOException {
