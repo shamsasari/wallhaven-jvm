@@ -1,9 +1,13 @@
 package shamsasari.wallhavenplugin;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import shamsasari.wallhavenplugin.RestApi.Wallpaper;
+import shamsasari.wallhavenplugin.RestApi.WallpaperInfo;
+import shamsasari.wallhavenplugin.RestApi.WallpaperResult;
 
 import java.awt.*;
 import java.io.IOException;
@@ -21,6 +25,7 @@ import java.util.function.Supplier;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 class Main {
+    private static final DisplayMode displayMode = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode();
     private static final Path appHomeDir = Path.of(System.getProperty("user.home")).resolve("wallhaven-plugin");
     @SuppressWarnings("preview")
     private static final Supplier<Logger> logger = StableValue.supplier(() -> {
@@ -28,6 +33,10 @@ class Main {
         return LogManager.getLogger("MainLog");
     });
     private static final JsonMapper jsonMapper = new JsonMapper();
+
+    static {
+        jsonMapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    }
 
     void main() throws IOException {
         Files.createDirectories(appHomeDir);
@@ -49,102 +58,91 @@ class Main {
             config = jsonMapper.createObjectNode();
         }
 
-        try (var httpClient = HttpClient.newHttpClient()) {
-            var matchingWallpaper = findMatchingWallpaper(httpClient, config);
-            if (matchingWallpaper == null) {
-                logger().warn("No results");
-                return;
-            }
-
-            var id = matchingWallpaper.get("id").textValue();
-            var wallpaperUrl = toUri(matchingWallpaper.get("path").textValue());
-
-            var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(id);
-            Files.write(wallpaperFile, get(httpClient, wallpaperUrl));
-            WindowsOperatingSystem.setWallpaper(wallpaperFile);
-        }
-    }
-
-    private JsonNode findMatchingWallpaper(HttpClient httpClient, JsonNode config) throws IOException {
-        var displayMode = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode();
-
-        var q = config.get("q");
+        var q = config.path("q").textValue();
         var excludeSimilarTags = config.path("excludeSimilarTags")
                 .valueStream()
                 .map(tag -> tag.textValue().toLowerCase())
                 .toList();
 
-        var page = 0;
-        String seed = null;
-        Integer lastPage = null;
+        try (var httpClient = HttpClient.newHttpClient()) {
+            var matchingWallpaper = getMatchingWallpaper(httpClient, q, excludeSimilarTags);
+            if (matchingWallpaper == null) {
+                logger().warn("No results");
+                return;
+            }
+            logger().info("Setting wallpaper {} {}", matchingWallpaper.url(), matchingWallpaper.tags());
+            var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(matchingWallpaper.id());
+            Files.write(wallpaperFile, get(httpClient, matchingWallpaper.path()));
+            WindowsOperatingSystem.setWallpaper(wallpaperFile);
+        }
+    }
 
+    private Wallpaper getMatchingWallpaper(HttpClient httpClient, String q, List<String> excludeSimilarTags) throws IOException {
+        var wallpaperFetcher = new WallpaperFetcher(httpClient, q);
         while (true) {
-            page++;
-            if (lastPage != null && page > lastPage) {
+            List<WallpaperInfo> wallpaperInfos = wallpaperFetcher.getNextWallpaperPage();
+            if (wallpaperInfos == null) {
+                return null;
+            }
+            for (var wallpaperInfo : wallpaperInfos) {
+                var wallpaper = wallpaperFetcher.getWallpaper(wallpaperInfo.id());
+                var matching = wallpaper.tags()
+                        .stream()
+                        .allMatch(tag -> {
+                            var normalisedTag = tag.name().toLowerCase();
+                            return excludeSimilarTags.stream().noneMatch(normalisedTag::contains);
+                        });
+                if (matching) {
+                    return wallpaper;
+                }
+                logger().info("{} does not match", wallpaper.url());
+            }
+            logger().info("No matching wallpaper, searching next page...");
+        }
+    }
+
+    private static final class WallpaperFetcher {
+        private final HttpClient httpClient;
+        private final String q;
+        private RestApi.Meta meta;
+
+        private WallpaperFetcher(HttpClient httpClient, String q) {
+            this.httpClient = httpClient;
+            this.q = q;
+        }
+
+        List<WallpaperInfo> getNextWallpaperPage() throws IOException {
+            var page = meta != null ? meta.currentPage() + 1 : 1;
+            if (meta != null && page > meta.lastPage()) {
                 return null;
             }
 
-            var randomWallpapersUrl = new StringBuilder("https://wallhaven.cc/api/v1/search?sorting=random&atleast=")
+            var url = new StringBuilder("https://wallhaven.cc/api/v1/search?sorting=random&atleast=")
                     .append(displayMode.getWidth()).append('x').append(displayMode.getHeight())
                     .append("&page=").append(page);
             if (q != null) {
-                randomWallpapersUrl.append("&q=").append(URLEncoder.encode(q.textValue(), UTF_8));
+                url.append("&q=").append(URLEncoder.encode(q, UTF_8));
             }
-            if (seed != null) {
-                randomWallpapersUrl.append("&seed=").append(seed);
+            if (meta != null) {
+                url.append("&seed=").append(meta.seed());
             }
 
-            var response = getJson(httpClient, toUri(randomWallpapersUrl));
-            var data = response.get("data");
-            if (data == null) {
+            byte[] bytes = get(httpClient, toUri(url));
+            var result = jsonMapper.readValue(bytes, RestApi.SearchResult.class);
+            meta = result.meta();
+            if (result.data() == null) {
                 return null;
             }
+            return result.data();
+        }
 
-            if (excludeSimilarTags.isEmpty()) {
-                return data.get(0);
-            } else {
-                if (seed == null) {
-                    seed = response.get("meta").get("seed").textValue();
-                }
-                if (lastPage == null) {
-                    lastPage = response.get("meta").get("last_page").intValue();
-                }
-                for (var json : data) {
-                    var id = json.get("id").textValue();
-                    List<String> tags = getWallpaperTags(httpClient, id);
-                    var matching = tags.stream().allMatch(tag -> excludeSimilarTags.stream().noneMatch(tag::contains));
-                    if (matching) {
-                        logger().info("Setting wallpaper {} {}", json.get("url"), tags);
-                        return json;
-                    }
-                    logger().info("{} does not match", json.get("url"));
-                }
-                logger().info("No matching wallpaper, searching on next page...");
-            }
+        Wallpaper getWallpaper(String id) throws IOException {
+            var bytes = get(httpClient, toUri("https://wallhaven.cc/api/v1/w/" + id));
+            return jsonMapper.readValue(bytes, WallpaperResult.class).data();
         }
     }
 
-    private List<String> getWallpaperTags(HttpClient httpClient, String id) throws IOException {
-        return getWallpaperInfo(httpClient, id).get("data").get("tags")
-                .valueStream()
-                .map(tag -> tag.get("name").textValue().toLowerCase())
-                .toList();
-    }
-
-    private JsonNode getWallpaperInfo(HttpClient httpClient, String id) throws IOException {
-        return getJson(httpClient, toUri("https://wallhaven.cc/api/v1/w/" + id));
-    }
-
-    private JsonNode getJson(HttpClient httpClient, URI url) throws IOException {
-        byte[] bytes = get(httpClient, url);
-        try {
-            return jsonMapper.readTree(bytes);
-        } catch (IOException e) {
-            throw new IOException(new String(bytes), e);
-        }
-    }
-
-    private byte[] get(HttpClient httpClient, URI url) throws IOException {
+    private static byte[] get(HttpClient httpClient, URI url) throws IOException {
         try {
             return httpClient.send(HttpRequest.newBuilder(url).GET().build(), BodyHandlers.ofByteArray()).body();
         } catch (InterruptedException e) {
@@ -153,7 +151,7 @@ class Main {
         }
     }
 
-    private URI toUri(CharSequence uri) {
+    private static URI toUri(CharSequence uri) {
         try {
             return new URI(uri.toString());
         } catch (URISyntaxException e) {
@@ -161,7 +159,7 @@ class Main {
         }
     }
 
-    private Logger logger() {
+    private static Logger logger() {
         return logger.get();
     }
 }
