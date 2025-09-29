@@ -11,7 +11,7 @@ import java.util.List;
 public class RestApi {
     public record SearchResult(List<WallpaperInfo> data, Meta meta) {}
 
-    public record WallpaperInfo(String id) {}
+    public record WallpaperInfo(String id, String url) {}
 
     public record Meta(
             @JsonProperty("current_page")
