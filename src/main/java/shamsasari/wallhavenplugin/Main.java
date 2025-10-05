@@ -1,15 +1,18 @@
 package shamsasari.wallhavenplugin;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import shamsasari.wallhavenplugin.RestApi.Wallpaper;
 import shamsasari.wallhavenplugin.RestApi.WallpaperInfo;
 import shamsasari.wallhavenplugin.RestApi.WallpaperResult;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy;
+import tools.jackson.databind.json.JsonMapper;
 
+import javax.imageio.ImageIO;
 import java.awt.*;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -37,8 +40,7 @@ class Main {
         logger = LogManager.getLogger("MainLog");
         logger.info("Start");
         displayMode = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode();
-        jsonMapper = new JsonMapper();
-        jsonMapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+        jsonMapper = JsonMapper.builder().propertyNamingStrategy(new SnakeCaseStrategy()).build();
     }
 
     void main() {
@@ -60,22 +62,26 @@ class Main {
             config = jsonMapper.createObjectNode();
         }
 
-        var q = config.path("q").textValue();
+        var q = config.path("q").stringValue(null);
         var excludeSimilarTags = config.path("excludeSimilarTags")
                 .valueStream()
-                .map(tag -> tag.textValue().toLowerCase())
+                .map(tag -> tag.stringValue().toLowerCase())
                 .toList();
 
-        try (var httpClient = HttpClient.newHttpClient()) {
-            var matchingWallpaper = getMatchingWallpaper(httpClient, q, excludeSimilarTags);
-            if (matchingWallpaper == null) {
+        try (var httpClient = HttpClient.newBuilder().executor(Runnable::run).build()) {
+            var wallpaper = getMatchingWallpaper(httpClient, q, excludeSimilarTags);
+            if (wallpaper == null) {
                 logger.warn("No results");
                 return;
             }
-            var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(matchingWallpaper.id());
-            Files.write(wallpaperFile, get(httpClient, matchingWallpaper.path()));
+            var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(wallpaper.id());
+            byte[] bytes = get(httpClient, wallpaper.path());
+            var image = ImageIO.read(new ByteArrayInputStream(bytes));
+            var brightness = calculateBrightness(image);
+            System.out.println("brightness = " + brightness);
+            Files.write(wallpaperFile, bytes);
             WindowsOperatingSystem.setWallpaper(wallpaperFile);
-            logger.info("Wallpaper set {} {}", matchingWallpaper.url(), matchingWallpaper.tags());
+            logger.info("Wallpaper changed to {} {}", wallpaper.url(), wallpaper.tags());
         }
     }
 
@@ -170,6 +176,14 @@ class Main {
                     });
             return matching ? wallpaper : null;
         }
+
+        private static URI toUri(CharSequence uri) {
+            try {
+                return new URI(uri.toString());
+            } catch (URISyntaxException e) {
+                throw new IllegalArgumentException(e);
+            }
+        }
     }
 
     private static byte[] get(HttpClient httpClient, URI url) throws IOException, InterruptedException {
@@ -181,11 +195,27 @@ class Main {
         return response.body();
     }
 
-    private static URI toUri(CharSequence uri) {
-        try {
-            return new URI(uri.toString());
-        } catch (URISyntaxException e) {
-            throw new IllegalArgumentException(e);
+    public static double calculateBrightness(BufferedImage image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        long totalBrightness = 0;
+        int pixelCount = width * height;
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int rgb = image.getRGB(x, y);
+
+                // Extract RGB components
+                int red = (rgb >> 16) & 0xFF;
+                int green = (rgb >> 8) & 0xFF;
+                int blue = rgb & 0xFF;
+
+                // Calculate luminance using standard formula
+                int luminance = (int)(0.299 * red + 0.587 * green + 0.114 * blue);
+                totalBrightness += luminance;
+            }
         }
+
+        return (double) totalBrightness / pixelCount;
     }
 }

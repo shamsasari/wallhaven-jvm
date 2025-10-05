@@ -1,9 +1,5 @@
 package shamsasari.wallhavenplugin;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.annotation.JsonSetter;
-import com.fasterxml.jackson.annotation.Nulls;
-
 import javax.annotation.Nonnull;
 import java.net.URI;
 import java.util.List;
@@ -14,9 +10,7 @@ public class RestApi {
     public record WallpaperInfo(String id, String url) {}
 
     public record Meta(
-            @JsonProperty("current_page")
             int currentPage,
-            @JsonProperty("last_page")
             int lastPage,
             String seed
     ) {}
@@ -27,7 +21,6 @@ public class RestApi {
             String id,
             String url,
             URI path,
-            @JsonSetter(nulls = Nulls.AS_EMPTY)
             List<Tag> tags
     ) {}
 

@@ -27,5 +27,5 @@ application {
 
 dependencies {
     implementation("org.apache.logging.log4j:log4j-core:2.25.2")
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.20.0")
+    implementation("tools.jackson.core:jackson-databind:3.0.0")
 }
