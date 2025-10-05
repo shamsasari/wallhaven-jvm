@@ -14,6 +14,7 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLEncoder;
@@ -25,15 +26,25 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.StructuredTaskScope.Joiner;
+import java.util.function.Supplier;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 @SuppressWarnings("preview")
 class Main {
+    private static final int DARK_MODE_BRIGHTNESS_LIMIT = 50;
+
     private static final Path appHomeDir = Path.of(System.getProperty("user.home")).resolve("wallhaven-plugin");
     private static final Logger logger;
     private static final DisplayMode displayMode;
     private static final JsonMapper jsonMapper;
+    private static final Supplier<Boolean> isDarkMode = StableValue.supplier(() -> {
+        try {
+            return isDarkMode();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    });
 
     static {
         System.setProperty("app.home", appHomeDir.toString());
@@ -69,23 +80,47 @@ class Main {
                 .toList();
 
         try (var httpClient = HttpClient.newBuilder().executor(Runnable::run).build()) {
-            var wallpaper = getMatchingWallpaper(httpClient, q, excludeSimilarTags);
-            if (wallpaper == null) {
+            var matching = getMatchingWallpaper(httpClient, q, excludeSimilarTags);
+            if (matching == null) {
                 logger.warn("No results");
                 return;
             }
-            var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(wallpaper.id());
-            byte[] bytes = get(httpClient, wallpaper.path());
-            var image = ImageIO.read(new ByteArrayInputStream(bytes));
-            var brightness = calculateBrightness(image);
-            System.out.println("brightness = " + brightness);
-            Files.write(wallpaperFile, bytes);
+            var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(matching.wallpaper.id());
+            Files.write(wallpaperFile, matching.data);
             WindowsOperatingSystem.setWallpaper(wallpaperFile);
-            logger.info("Wallpaper changed to {} {}", wallpaper.url(), wallpaper.tags());
+            logger.info("Wallpaper changed to {} {}", matching.wallpaper.url(), matching.wallpaper.tags());
         }
     }
 
-    private Wallpaper getMatchingWallpaper(HttpClient httpClient,
+    private static boolean isDarkMode() throws IOException {
+        var process = new ProcessBuilder(
+                "reg",
+                "query",
+                "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                "/v",
+                "SystemUsesLightTheme"
+        ).start();
+        try (var reader = process.inputReader()) {
+            var output = reader
+                    .lines()
+                    .skip(2)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("Unable to determine Windows dark mode"));
+            String header = "    SystemUsesLightTheme    REG_DWORD    ";
+            if (output.length() != header.length() + 3 || !output.startsWith(header)) {
+                throw new IllegalStateException("Unable to determine Windows dark mode: " + output);
+            }
+            if (output.endsWith("0x0")) {
+                return true;
+            } else if (output.endsWith("0x1")) {
+                return false;
+            } else {
+                throw new IllegalStateException("Unable to determine Windows dark mode: " + output);
+            }
+        }
+    }
+
+    private WallpaperAndData getMatchingWallpaper(HttpClient httpClient,
                                            String q,
                                            List<String> excludeSimilarTags) throws IOException, InterruptedException {
         class NonMatchingWallpaper extends Exception {}
@@ -97,7 +132,7 @@ class Main {
                 return null;
             }
             try (var taskScope = StructuredTaskScope.open(
-                    Joiner.<Wallpaper>anySuccessfulResultOrThrow(),
+                    Joiner.<WallpaperAndData>anySuccessfulResultOrThrow(),
                     config -> config.withThreadFactory(Thread.ofVirtual().name("fetcher", 0).factory())
             )) {
                 for (var wallpaperInfo : wallpaperInfos) {
@@ -106,7 +141,6 @@ class Main {
                         if (wallpaper != null) {
                             return wallpaper;
                         }
-                        logger.info("{} does not match", wallpaperInfo.url());
                         throw new NonMatchingWallpaper();
                     });
                 }
@@ -122,6 +156,8 @@ class Main {
             }
         }
     }
+
+    private record WallpaperAndData(Wallpaper wallpaper, byte[] data) {}
 
     private static final class WallpaperFetcher {
         private final HttpClient httpClient;
@@ -165,7 +201,7 @@ class Main {
             return jsonMapper.readValue(bytes, WallpaperResult.class).data();
         }
 
-        Wallpaper getMatchingWallpaper(String id) throws IOException, InterruptedException {
+        WallpaperAndData getMatchingWallpaper(String id) throws IOException, InterruptedException {
             Wallpaper wallpaper = getWallpaper(id);
             var matching = wallpaper
                     .tags()
@@ -174,7 +210,17 @@ class Main {
                         var normalisedTag = tag.name().toLowerCase();
                         return excludeSimilarTags.stream().noneMatch(normalisedTag::contains);
                     });
-            return matching ? wallpaper : null;
+            if (!matching) {
+                logger.info("{} does not match", wallpaper.url());
+                return null;
+            }
+            byte[] bytes = get(httpClient, wallpaper.path());
+            var image = ImageIO.read(new ByteArrayInputStream(bytes));
+            if (isDarkMode.get() && calculateBrightness(image) > DARK_MODE_BRIGHTNESS_LIMIT) {
+                logger.info("{} too bright for dark mode ({})", wallpaper.url(), calculateBrightness(image));
+                return null;
+            }
+            return new WallpaperAndData(wallpaper, bytes);
         }
 
         private static URI toUri(CharSequence uri) {
@@ -195,7 +241,7 @@ class Main {
         return response.body();
     }
 
-    public static double calculateBrightness(BufferedImage image) {
+    public static int calculateBrightness(BufferedImage image) {
         int width = image.getWidth();
         int height = image.getHeight();
         long totalBrightness = 0;
@@ -216,6 +262,6 @@ class Main {
             }
         }
 
-        return (double) totalBrightness / pixelCount;
+        return (int)(totalBrightness / pixelCount);
     }
 }
