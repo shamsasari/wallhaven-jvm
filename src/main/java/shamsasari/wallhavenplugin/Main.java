@@ -20,6 +20,7 @@ import java.net.URISyntaxException;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,10 +35,9 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 class Main {
     private static final int DARK_MODE_BRIGHTNESS_LIMIT = 50;
 
+    private static final long startTime = System.currentTimeMillis();
     private static final Path appHomeDir = Path.of(System.getProperty("user.home")).resolve("wallhaven-plugin");
-    private static final Logger logger;
-    private static final DisplayMode displayMode;
-    private static final JsonMapper jsonMapper;
+    private static final JsonMapper jsonMapper = JsonMapper.builder().propertyNamingStrategy(new SnakeCaseStrategy()).build();
     private static final Supplier<Boolean> isDarkMode = StableValue.supplier(() -> {
         try {
             return isDarkMode();
@@ -45,13 +45,11 @@ class Main {
             throw new UncheckedIOException(e);
         }
     });
+    private static final Logger logger;
 
     static {
         System.setProperty("app.home", appHomeDir.toString());
         logger = LogManager.getLogger("MainLog");
-        logger.info("Start");
-        displayMode = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode();
-        jsonMapper = JsonMapper.builder().propertyNamingStrategy(new SnakeCaseStrategy()).build();
     }
 
     void main() {
@@ -79,17 +77,16 @@ class Main {
                 .map(tag -> tag.stringValue().toLowerCase())
                 .toList();
 
-        try (var httpClient = HttpClient.newBuilder().executor(Runnable::run).build()) {
-            var matching = getMatchingWallpaper(httpClient, q, excludeSimilarTags);
-            if (matching == null) {
-                logger.warn("No results");
-                return;
-            }
-            var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(matching.wallpaper.id());
-            Files.write(wallpaperFile, matching.data);
-            WindowsOperatingSystem.setWallpaper(wallpaperFile);
-            logger.info("Wallpaper changed to {} {}", matching.wallpaper.url(), matching.wallpaper.tags());
+        var matching = getMatchingWallpaper(q, excludeSimilarTags);
+        if (matching == null) {
+            logger.warn("No results");
+            return;
         }
+        var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(matching.wallpaper.id());
+        Files.write(wallpaperFile, matching.data);
+        WindowsOperatingSystem.setWallpaper(wallpaperFile);
+        var duration = System.currentTimeMillis() - startTime;
+        logger.info("Wallpaper changed to {} {} ({}ms)", matching.wallpaper.url(), matching.wallpaper.tags(), duration);
     }
 
     private static boolean isDarkMode() throws IOException {
@@ -120,38 +117,48 @@ class Main {
         }
     }
 
-    private WallpaperAndData getMatchingWallpaper(HttpClient httpClient,
-                                           String q,
-                                           List<String> excludeSimilarTags) throws IOException, InterruptedException {
+    private WallpaperAndData getMatchingWallpaper(String q, List<String> excludeSimilarTags) throws IOException, InterruptedException {
+        try (var wallpaperFetcher = new WallhavenClient(q, excludeSimilarTags)) {
+            while (true) {
+                List<WallpaperInfo> wallpaperInfos = wallpaperFetcher.getNextPage();
+                if (wallpaperInfos == null) {
+                    return null;
+                }
+                var matching = getMatchingWallpaperFromPage(wallpaperInfos, wallpaperFetcher);
+                if (matching != null) {
+                    return matching;
+                }
+            }
+        }
+    }
+
+    private WallpaperAndData getMatchingWallpaperFromPage(List<WallpaperInfo> wallpaperInfos,
+                                                          WallhavenClient client) throws InterruptedException {
         class NonMatchingWallpaper extends Exception {}
 
-        var wallpaperFetcher = new WallpaperFetcher(httpClient, q, excludeSimilarTags);
-        while (true) {
-            List<WallpaperInfo> wallpaperInfos = wallpaperFetcher.getNextPage();
-            if (wallpaperInfos == null) {
-                return null;
-            }
-            try (var taskScope = StructuredTaskScope.open(
-                    Joiner.<WallpaperAndData>anySuccessfulResultOrThrow(),
-                    config -> config.withThreadFactory(Thread.ofVirtual().name("fetcher", 0).factory())
-            )) {
-                for (var wallpaperInfo : wallpaperInfos) {
-                    taskScope.fork(() -> {
-                        var wallpaper = wallpaperFetcher.getMatchingWallpaper(wallpaperInfo.id());
-                        if (wallpaper != null) {
-                            return wallpaper;
-                        }
-                        throw new NonMatchingWallpaper();
-                    });
-                }
-
-                try {
-                    return taskScope.join();
-                } catch (StructuredTaskScope.FailedException e) {
-                    switch (e.getCause()) {
-                        case NonMatchingWallpaper _ -> logger.info("No matching wallpaper, searching next page...");
-                        case null, default -> throw e;
+        try (var taskScope = StructuredTaskScope.open(
+                Joiner.<WallpaperAndData>anySuccessfulResultOrThrow(),
+                config -> config.withThreadFactory(Thread.ofVirtual().name("fetcher", 0).factory())
+        )) {
+            for (var wallpaperInfo : wallpaperInfos) {
+                taskScope.fork(() -> {
+                    var wallpaper = client.getMatchingWallpaper(wallpaperInfo.id());
+                    if (wallpaper != null) {
+                        return wallpaper;
                     }
+                    throw new NonMatchingWallpaper();
+                });
+            }
+
+            try {
+                return taskScope.join();
+            } catch (StructuredTaskScope.FailedException e) {
+                switch (e.getCause()) {
+                    case NonMatchingWallpaper _ -> {
+                        logger.info("No matching wallpaper, searching next page...");
+                        return null;
+                    }
+                    case null, default -> throw e;
                 }
             }
         }
@@ -159,14 +166,19 @@ class Main {
 
     private record WallpaperAndData(Wallpaper wallpaper, byte[] data) {}
 
-    private static final class WallpaperFetcher {
+    static final class WallhavenClient implements AutoCloseable {
+        private static final int MAX_REQUESTS_PER_SEC = 45;
+
+        private static final DisplayMode displayMode = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode();
+
         private final HttpClient httpClient;
         private final String q;
         private final List<String> excludeSimilarTags;
+        private volatile long backoffUntil;
         private RestApi.Meta meta;
 
-        private WallpaperFetcher(HttpClient httpClient, String q, List<String> excludeSimilarTags) {
-            this.httpClient = httpClient;
+        WallhavenClient(String q, List<String> excludeSimilarTags) {
+            httpClient = HttpClient.newBuilder().executor(Runnable::run).build();
             this.q = q;
             this.excludeSimilarTags = excludeSimilarTags;
         }
@@ -187,7 +199,7 @@ class Main {
                 url.append("&seed=").append(meta.seed());
             }
 
-            byte[] bytes = get(httpClient, toUri(url));
+            byte[] bytes = httpGet(toUri(url));
             var result = jsonMapper.readValue(bytes, RestApi.SearchResult.class);
             meta = result.meta();
             if (result.data() == null) {
@@ -197,7 +209,7 @@ class Main {
         }
 
         Wallpaper getWallpaper(String id) throws IOException, InterruptedException {
-            var bytes = get(httpClient, toUri("https://wallhaven.cc/api/v1/w/" + id));
+            var bytes = httpGet(toUri("https://wallhaven.cc/api/v1/w/" + id));
             return jsonMapper.readValue(bytes, WallpaperResult.class).data();
         }
 
@@ -214,7 +226,7 @@ class Main {
                 logger.info("{} does not match", wallpaper.url());
                 return null;
             }
-            byte[] bytes = get(httpClient, wallpaper.path());
+            byte[] bytes = httpGet(wallpaper.path());
             var image = ImageIO.read(new ByteArrayInputStream(bytes));
             if (isDarkMode.get() && calculateBrightness(image) > DARK_MODE_BRIGHTNESS_LIMIT) {
                 logger.info("{} too bright for dark mode ({})", wallpaper.url(), calculateBrightness(image));
@@ -230,15 +242,40 @@ class Main {
                 throw new IllegalArgumentException(e);
             }
         }
-    }
 
-    private static byte[] get(HttpClient httpClient, URI url) throws IOException, InterruptedException {
-        logger.debug("GET: {}", url);
-        var response = httpClient.send(HttpRequest.newBuilder(url).GET().build(), BodyHandlers.ofByteArray());
-        if (response.statusCode() != 200) {
-            throw new IOException("Received error code " + response.statusCode() + ": " + response.headers());
+        private byte[] httpGet(URI url) throws IOException, InterruptedException {
+            while (true) {
+                var response = rawHttpGet(url);
+                switch (response.statusCode()) {
+                    case 200 -> {
+                        return response.body();
+                    }
+                    case 429 -> throttle(response);
+                    default -> throw new IOException("Received error code " + response.statusCode() + ": " + response.headers());
+                }
+            }
         }
-        return response.body();
+
+        private HttpResponse<byte[]> rawHttpGet(URI url) throws IOException, InterruptedException {
+            var backOffDelay = backoffUntil - System.currentTimeMillis();
+            if (backOffDelay > 0) {
+                Thread.sleep(backOffDelay);
+            }
+            logger.debug("GET: {}", url);
+            return httpClient.send(HttpRequest.newBuilder(url).GET().build(), BodyHandlers.ofByteArray());
+        }
+
+        private void throttle(HttpResponse<?> response) {
+            var retryAfterSecs = response.headers().firstValueAsLong("retry-after").orElse(MAX_REQUESTS_PER_SEC);
+            var retryAfterMillis = retryAfterSecs * 1000;
+            backoffUntil = System.currentTimeMillis() + retryAfterMillis;
+            logger.warn("Throttled, trying again after {}s", retryAfterSecs);
+        }
+
+        @Override
+        public void close() {
+            httpClient.close();
+        }
     }
 
     public static int calculateBrightness(BufferedImage image) {
