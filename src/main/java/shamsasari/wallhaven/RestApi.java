@@ -1,4 +1,4 @@
-package shamsasari.wallhavenplugin;
+package shamsasari.wallhaven;
 
 import javax.annotation.Nonnull;
 import java.net.URI;

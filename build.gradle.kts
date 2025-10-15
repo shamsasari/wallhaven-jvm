@@ -18,7 +18,7 @@ tasks.withType<JavaCompile> {
 }
 
 application {
-    mainClass = "shamsasari.wallhavenplugin.Main"
+    mainClass = "shamsasari.wallhaven.Main"
     applicationDefaultJvmArgs = listOf(
         "--enable-preview",
         "--enable-native-access=ALL-UNNAMED"

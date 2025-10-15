@@ -1,10 +1,10 @@
-package shamsasari.wallhavenplugin;
+package shamsasari.wallhaven;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import shamsasari.wallhavenplugin.RestApi.Wallpaper;
-import shamsasari.wallhavenplugin.RestApi.WallpaperInfo;
-import shamsasari.wallhavenplugin.RestApi.WallpaperResult;
+import shamsasari.wallhaven.RestApi.Wallpaper;
+import shamsasari.wallhaven.RestApi.WallpaperInfo;
+import shamsasari.wallhaven.RestApi.WallpaperResult;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy;
 import tools.jackson.databind.json.JsonMapper;

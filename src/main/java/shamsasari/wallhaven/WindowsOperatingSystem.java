@@ -1,4 +1,4 @@
-package shamsasari.wallhavenplugin;
+package shamsasari.wallhaven;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
