@@ -5,7 +5,11 @@ import java.net.URI;
 import java.util.List;
 
 public class RestApi {
-    public record SearchResult(List<WallpaperInfo> data, Meta meta) {}
+    public record SearchResult(List<WallpaperInfo> data, Meta meta) {
+        public SearchResult {
+            data = List.copyOf(data);
+        }
+    }
 
     public record WallpaperInfo(String id, String url) {}
 
@@ -22,7 +26,11 @@ public class RestApi {
             String url,
             URI path,
             List<Tag> tags
-    ) {}
+    ) {
+        public Wallpaper {
+            tags = List.copyOf(tags);
+        }
+    }
 
     public record Tag(String name) {
         @Nonnull

@@ -15,6 +15,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.management.ManagementFactory;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLEncoder;
@@ -25,6 +26,7 @@ import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.Executors;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.StructuredTaskScope.Joiner;
 import java.util.function.Supplier;
@@ -35,7 +37,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 class Main {
     private static final int DARK_MODE_BRIGHTNESS_LIMIT = 50;
 
-    private static final long startTime = System.currentTimeMillis();
     private static final Path appHomeDir = Path.of(System.getProperty("user.home")).resolve("wallhaven-plugin");
     private static final JsonMapper jsonMapper = JsonMapper.builder().propertyNamingStrategy(new SnakeCaseStrategy()).build();
     private static final Supplier<Boolean> isDarkMode = StableValue.supplier(() -> {
@@ -85,8 +86,8 @@ class Main {
         var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(matching.wallpaper.id());
         Files.write(wallpaperFile, matching.data);
         WindowsOperatingSystem.setWallpaper(wallpaperFile);
-        var duration = System.currentTimeMillis() - startTime;
-        logger.info("Wallpaper changed to {} {} ({}ms)", matching.wallpaper.url(), matching.wallpaper.tags(), duration);
+        var upTime = ManagementFactory.getRuntimeMXBean().getUptime();
+        logger.info("Wallpaper changed to {} {} ({}ms)", matching.wallpaper.url(), matching.wallpaper.tags(), upTime);
     }
 
     private static boolean isDarkMode() throws IOException {
@@ -178,7 +179,7 @@ class Main {
         private RestApi.Meta meta;
 
         WallhavenClient(String q, List<String> excludeSimilarTags) {
-            httpClient = HttpClient.newBuilder().executor(Runnable::run).build();
+            httpClient = HttpClient.newBuilder().executor(Executors.newVirtualThreadPerTaskExecutor()).build();
             this.q = q;
             this.excludeSimilarTags = excludeSimilarTags;
         }
