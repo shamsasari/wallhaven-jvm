@@ -1,6 +1,6 @@
 plugins {
     application
-    id("com.gradleup.shadow") version "9.2.1"
+    id("com.gradleup.shadow") version "9.4.1"
     id("com.github.ben-manes.versions") version "0.53.0"
 }
 
@@ -28,5 +28,5 @@ application {
 
 dependencies {
     implementation("org.apache.logging.log4j:log4j-core:2.25.2")
-    implementation("tools.jackson.core:jackson-databind:3.0.0")
+    implementation("tools.jackson.core:jackson-databind:3.1.1")
 }
