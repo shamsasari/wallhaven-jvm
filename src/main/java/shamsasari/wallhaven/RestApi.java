@@ -39,4 +39,6 @@ public class RestApi {
             return name;
         }
     }
+
+    public record WallpaperAndData(Wallpaper wallpaper, byte[] data) {}
 }

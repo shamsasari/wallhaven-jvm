@@ -1,6 +1,7 @@
 plugins {
     application
     id("com.gradleup.shadow") version "9.2.1"
+    id("com.github.ben-manes.versions") version "0.53.0"
 }
 
 repositories {
