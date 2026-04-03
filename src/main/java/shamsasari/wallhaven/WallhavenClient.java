@@ -4,17 +4,16 @@ import shamsasari.wallhaven.RestApi.WallpaperAndData;
 
 import javax.imageio.ImageIO;
 import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
-import java.util.function.Supplier;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
@@ -25,9 +24,9 @@ public final class WallhavenClient implements AutoCloseable {
     private static final int DARK_MODE_BRIGHTNESS_LIMIT = 50;
 
     private static final DisplayMode displayMode = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode();
-    private static final Supplier<Boolean> isDarkMode = StableValue.supplier(() -> {
+    private static final LazyConstant<Boolean> isDarkMode = LazyConstant.of(() -> {
         try {
-            return isDarkMode();
+            return calculateDarkMode();
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -61,7 +60,7 @@ public final class WallhavenClient implements AutoCloseable {
             url.append("&seed=").append(meta.seed());
         }
 
-        byte[] bytes = httpGet(toUri(url));
+        byte[] bytes = httpGet(URI.create(url.toString()));
         var result = Main.jsonMapper.readValue(bytes, RestApi.SearchResult.class);
         meta = result.meta();
         if (result.data() == null) {
@@ -71,7 +70,7 @@ public final class WallhavenClient implements AutoCloseable {
     }
 
     RestApi.Wallpaper getWallpaper(String id) throws IOException, InterruptedException {
-        var bytes = httpGet(toUri("https://wallhaven.cc/api/v1/w/" + id));
+        var bytes = httpGet(URI.create("https://wallhaven.cc/api/v1/w/" + id));
         return Main.jsonMapper.readValue(bytes, RestApi.WallpaperResult.class).data();
     }
 
@@ -90,19 +89,11 @@ public final class WallhavenClient implements AutoCloseable {
         }
         byte[] bytes = httpGet(wallpaper.path());
         var image = ImageIO.read(new ByteArrayInputStream(bytes));
-        if (isDarkMode.get() && Main.calculateBrightness(image) > DARK_MODE_BRIGHTNESS_LIMIT) {
-            Main.logger.info("{} too bright for dark mode ({})", wallpaper.url(), Main.calculateBrightness(image));
+        if (isDarkMode.get() && calculateBrightness(image) > DARK_MODE_BRIGHTNESS_LIMIT) {
+            Main.logger.info("{} too bright for dark mode ({})", wallpaper.url(), calculateBrightness(image));
             return null;
         }
         return new WallpaperAndData(wallpaper, bytes);
-    }
-
-    private static URI toUri(CharSequence uri) {
-        try {
-            return new URI(uri.toString());
-        } catch (URISyntaxException e) {
-            throw new IllegalArgumentException(e);
-        }
     }
 
     private byte[] httpGet(URI url) throws IOException, InterruptedException {
@@ -140,15 +131,41 @@ public final class WallhavenClient implements AutoCloseable {
         httpClient.close();
     }
 
-    private static boolean isDarkMode() throws IOException {
-        var process = new ProcessBuilder(
+    private static int calculateBrightness(BufferedImage image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        long totalBrightness = 0;
+        int pixelCount = width * height;
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int rgb = image.getRGB(x, y);
+
+                // Extract RGB components
+                int red = (rgb >> 16) & 0xFF;
+                int green = (rgb >> 8) & 0xFF;
+                int blue = rgb & 0xFF;
+
+                // Calculate luminance using standard formula
+                int luminance = (int)(0.299 * red + 0.587 * green + 0.114 * blue);
+                totalBrightness += luminance;
+            }
+        }
+
+        return (int)(totalBrightness / pixelCount);
+    }
+
+    private static boolean calculateDarkMode() throws IOException {
+        var processBuilder = new ProcessBuilder(
                 "reg",
                 "query",
                 "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
                 "/v",
                 "SystemUsesLightTheme"
-        ).start();
-        try (var reader = process.inputReader()) {
+        );
+        try (var process = processBuilder.start();
+             var reader = process.inputReader()
+        ) {
             var output = reader
                     .lines()
                     .skip(2)

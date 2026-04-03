@@ -8,7 +8,6 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.nio.file.Files;
@@ -42,7 +41,7 @@ class Main {
         var configFile = appHomeDir.resolve("wallhaven-plugin.json");
         JsonNode config;
         if (Files.exists(configFile)) {
-            config = jsonMapper.readTree(configFile.toFile());
+            config = jsonMapper.readTree(configFile);
         } else {
             Files.createFile(configFile);
             config = jsonMapper.createObjectNode();
@@ -86,7 +85,7 @@ class Main {
         class NonMatchingWallpaper extends Exception {}
 
         try (var taskScope = StructuredTaskScope.open(
-                Joiner.<WallpaperAndData>anySuccessfulResultOrThrow(),
+                Joiner.<WallpaperAndData>anySuccessfulOrThrow(),
                 config -> config.withThreadFactory(Thread.ofVirtual().name("fetcher", 0).factory())
         )) {
             for (var wallpaperInfo : wallpaperInfos) {
@@ -111,29 +110,5 @@ class Main {
                 }
             }
         }
-    }
-
-    public static int calculateBrightness(BufferedImage image) {
-        int width = image.getWidth();
-        int height = image.getHeight();
-        long totalBrightness = 0;
-        int pixelCount = width * height;
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int rgb = image.getRGB(x, y);
-
-                // Extract RGB components
-                int red = (rgb >> 16) & 0xFF;
-                int green = (rgb >> 8) & 0xFF;
-                int blue = rgb & 0xFF;
-
-                // Calculate luminance using standard formula
-                int luminance = (int)(0.299 * red + 0.587 * green + 0.114 * blue);
-                totalBrightness += luminance;
-            }
-        }
-
-        return (int)(totalBrightness / pixelCount);
     }
 }
