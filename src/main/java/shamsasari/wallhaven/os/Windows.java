@@ -1,15 +1,12 @@
 package shamsasari.wallhaven.os;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.lang.foreign.Arena;
-import java.lang.foreign.FunctionDescriptor;
-import java.lang.foreign.Linker;
-import java.lang.foreign.SymbolLookup;
+import java.lang.foreign.*;
 import java.lang.invoke.MethodHandle;
 import java.nio.file.Files;
 
 import static java.lang.foreign.ValueLayout.*;
+import static java.nio.charset.StandardCharsets.UTF_16LE;
+import static shamsasari.wallhaven.os.WindowsBinding.*;
 
 @SuppressWarnings("preview")
 public final class Windows implements OperatingSystem {
@@ -18,16 +15,10 @@ public final class Windows implements OperatingSystem {
     private static final int SPIF_SENDCHANGE      = 0x02;
 
     private static final MethodHandle systemParametersInfoAFunction;
-    private static final LazyConstant<Boolean> isDarkModeConstant = LazyConstant.of(() -> {
-        try {
-            return calculateDarkMode();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    });
 
     static {
         System.loadLibrary("user32");
+        System.loadLibrary("Advapi32");
         // BOOL SystemParametersInfoA(UINT uiAction, UINT uiParam, PVOID pvParam, UINT fWinIni);
         systemParametersInfoAFunction = Linker.nativeLinker().downcallHandle(
                 SymbolLookup.loaderLookup().findOrThrow("SystemParametersInfoA"),
@@ -35,9 +26,11 @@ public final class Windows implements OperatingSystem {
         );
     }
 
+    private static final LazyConstant<Boolean> isDarkMode = LazyConstant.of(Windows::queryDarkMode);
+
     @Override
     public boolean isDarkMode() {
-        return isDarkModeConstant.get();
+        return isDarkMode.get();
     }
 
     @Override
@@ -62,33 +55,24 @@ public final class Windows implements OperatingSystem {
         }
     }
 
-    private static boolean calculateDarkMode() throws IOException {
-        var processBuilder = new ProcessBuilder(
-                "reg",
-                "query",
-                "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                "/v",
-                "SystemUsesLightTheme"
-        );
-        try (var process = processBuilder.start();
-             var reader = process.inputReader()
-        ) {
-            var output = reader
-                    .lines()
-                    .skip(2)
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("Unable to determine Windows dark mode"));
-            String header = "    SystemUsesLightTheme    REG_DWORD    ";
-            if (output.length() != header.length() + 3 || !output.startsWith(header)) {
-                throw new IllegalStateException("Unable to determine Windows dark mode: " + output);
+    private static boolean queryDarkMode() {
+        try (var arena = Arena.ofConfined()) {
+            var data = arena.allocate(C_INT);
+            var cbData = arena.allocate(C_INT);
+            cbData.set(C_INT, 0, (int)data.byteSize());
+            var errorCode = RegGetValueW(
+                    HKEY_CURRENT_USER(),
+                    arena.allocateFrom("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", UTF_16LE),
+                    arena.allocateFrom("SystemUsesLightTheme", UTF_16LE),
+                    RRF_RT_REG_DWORD(),
+                    MemorySegment.NULL,
+                    data,
+                    cbData
+            );
+            if (errorCode != ERROR_SUCCESS()) {
+                throw new IllegalStateException("RegGetValueW failed: " + errorCode);
             }
-            if (output.endsWith("0x0")) {
-                return true;
-            } else if (output.endsWith("0x1")) {
-                return false;
-            } else {
-                throw new IllegalStateException("Unable to determine Windows dark mode: " + output);
-            }
+            return data.get(C_INT, 0) == 0;
         }
     }
 }

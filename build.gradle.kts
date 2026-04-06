@@ -1,5 +1,6 @@
 plugins {
     application
+    id("de.infolektuell.jextract") version "1.4.0"
     id("com.gradleup.shadow") version "9.4.1"
     id("com.github.ben-manes.versions") version "0.53.0"
 }
@@ -29,4 +30,21 @@ application {
 dependencies {
     implementation("org.apache.logging.log4j:log4j-core:2.25.2")
     implementation("tools.jackson.core:jackson-databind:3.1.1")
+}
+
+jextract {
+    libraries {
+        val windows by registering {
+            header = file("""C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\um\Windows.h""")
+            whitelist {
+                functions.add("RegGetValueW")
+                constants.addAll("HKEY_CURRENT_USER", "RRF_RT_REG_DWORD", "ERROR_SUCCESS")
+            }
+            headerClassName = "WindowsBinding"
+            targetPackage = "shamsasari.wallhaven.os"
+        }
+        sourceSets.main {
+            jextract.libraries.addLater(windows)
+        }
+    }
 }
