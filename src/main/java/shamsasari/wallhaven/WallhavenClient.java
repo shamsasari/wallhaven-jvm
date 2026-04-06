@@ -7,7 +7,6 @@ import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -17,28 +16,21 @@ import java.util.List;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
+import static shamsasari.wallhaven.Main.OS;
 
-@SuppressWarnings("preview")
 public final class WallhavenClient implements AutoCloseable {
     private static final int MAX_REQUESTS_PER_SEC = 45;
     private static final int DARK_MODE_BRIGHTNESS_LIMIT = 50;
 
     private static final DisplayMode displayMode = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode();
-    private static final LazyConstant<Boolean> isDarkMode = LazyConstant.of(() -> {
-        try {
-            return calculateDarkMode();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    });
 
     private final HttpClient httpClient;
     private final String q;
-    private final java.util.List<String> excludeSimilarTags;
+    private final List<String> excludeSimilarTags;
     private volatile long backoffUntil;
     private RestApi.Meta meta;
 
-    WallhavenClient(String q, java.util.List<String> excludeSimilarTags) {
+    WallhavenClient(String q, List<String> excludeSimilarTags) {
         httpClient = HttpClient.newBuilder().executor(newVirtualThreadPerTaskExecutor()).build();
         this.q = q;
         this.excludeSimilarTags = excludeSimilarTags;
@@ -89,7 +81,7 @@ public final class WallhavenClient implements AutoCloseable {
         }
         byte[] bytes = httpGet(wallpaper.path());
         var image = ImageIO.read(new ByteArrayInputStream(bytes));
-        if (isDarkMode.get() && calculateBrightness(image) > DARK_MODE_BRIGHTNESS_LIMIT) {
+        if (OS.isDarkMode() && calculateBrightness(image) > DARK_MODE_BRIGHTNESS_LIMIT) {
             Main.logger.info("{} too bright for dark mode ({})", wallpaper.url(), calculateBrightness(image));
             return null;
         }
@@ -153,35 +145,5 @@ public final class WallhavenClient implements AutoCloseable {
         }
 
         return (int)(totalBrightness / pixelCount);
-    }
-
-    private static boolean calculateDarkMode() throws IOException {
-        var processBuilder = new ProcessBuilder(
-                "reg",
-                "query",
-                "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                "/v",
-                "SystemUsesLightTheme"
-        );
-        try (var process = processBuilder.start();
-             var reader = process.inputReader()
-        ) {
-            var output = reader
-                    .lines()
-                    .skip(2)
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("Unable to determine Windows dark mode"));
-            String header = "    SystemUsesLightTheme    REG_DWORD    ";
-            if (output.length() != header.length() + 3 || !output.startsWith(header)) {
-                throw new IllegalStateException("Unable to determine Windows dark mode: " + output);
-            }
-            if (output.endsWith("0x0")) {
-                return true;
-            } else if (output.endsWith("0x1")) {
-                return false;
-            } else {
-                throw new IllegalStateException("Unable to determine Windows dark mode: " + output);
-            }
-        }
     }
 }

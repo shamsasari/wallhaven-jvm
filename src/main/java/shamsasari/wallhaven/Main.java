@@ -4,6 +4,8 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import shamsasari.wallhaven.RestApi.WallpaperAndData;
 import shamsasari.wallhaven.RestApi.WallpaperInfo;
+import shamsasari.wallhaven.os.OperatingSystem;
+import shamsasari.wallhaven.os.Windows;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy;
 import tools.jackson.databind.json.JsonMapper;
@@ -20,6 +22,7 @@ import java.util.concurrent.StructuredTaskScope.Joiner;
 class Main {
     private static final Path appHomeDir = Path.of(System.getProperty("user.home")).resolve("wallhaven-plugin");
 
+    public static final OperatingSystem OS = new Windows();
     public static final JsonMapper jsonMapper = JsonMapper.builder().propertyNamingStrategy(new SnakeCaseStrategy()).build();
     public static final Logger logger;
 
@@ -58,9 +61,7 @@ class Main {
             logger.warn("No results");
             return;
         }
-        var wallpaperFile = Files.createTempDirectory("wallhaven-plugin").resolve(matching.wallpaper().id());
-        Files.write(wallpaperFile, matching.data());
-        WindowsOperatingSystem.setWallpaper(wallpaperFile);
+        OS.setWallpaper(matching.data());
         var upTime = ManagementFactory.getRuntimeMXBean().getUptime();
         logger.info("Wallpaper changed to {} {} ({}ms)", matching.wallpaper().url(), matching.wallpaper().tags(), upTime);
     }
