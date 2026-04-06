@@ -37,8 +37,15 @@ jextract {
         val windows by registering {
             header = file("""C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\um\Windows.h""")
             whitelist {
-                functions.add("RegGetValueW")
-                constants.addAll("HKEY_CURRENT_USER", "RRF_RT_REG_DWORD", "ERROR_SUCCESS")
+                functions.addAll("RegGetValueW", "SystemParametersInfoW")
+                constants.addAll(
+                    "ERROR_SUCCESS",
+                    "HKEY_CURRENT_USER",
+                    "RRF_RT_REG_DWORD",
+                    "SPI_SETDESKWALLPAPER",
+                    "SPIF_UPDATEINIFILE",
+                    "SPIF_SENDCHANGE",
+                )
             }
             headerClassName = "WindowsBinding"
             targetPackage = "shamsasari.wallhaven.os"

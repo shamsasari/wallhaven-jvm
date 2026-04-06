@@ -1,29 +1,20 @@
 package shamsasari.wallhaven.os;
 
-import java.lang.foreign.*;
-import java.lang.invoke.MethodHandle;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
+import java.nio.file.Path;
 
-import static java.lang.foreign.ValueLayout.*;
 import static java.nio.charset.StandardCharsets.UTF_16LE;
 import static shamsasari.wallhaven.os.WindowsBinding.*;
 
 @SuppressWarnings("preview")
 public final class Windows implements OperatingSystem {
-    private static final int SPI_SETDESKWALLPAPER = 0x0014;
-    private static final int SPIF_UPDATEINIFILE   = 0x01;
-    private static final int SPIF_SENDCHANGE      = 0x02;
-
-    private static final MethodHandle systemParametersInfoAFunction;
-
     static {
-        System.loadLibrary("user32");
         System.loadLibrary("Advapi32");
-        // BOOL SystemParametersInfoA(UINT uiAction, UINT uiParam, PVOID pvParam, UINT fWinIni);
-        systemParametersInfoAFunction = Linker.nativeLinker().downcallHandle(
-                SymbolLookup.loaderLookup().findOrThrow("SystemParametersInfoA"),
-                FunctionDescriptor.of(JAVA_BOOLEAN, JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT)
-        );
+        System.loadLibrary("user32");
     }
 
     private static final LazyConstant<Boolean> isDarkMode = LazyConstant.of(Windows::queryDarkMode);
@@ -31,28 +22,6 @@ public final class Windows implements OperatingSystem {
     @Override
     public boolean isDarkMode() {
         return isDarkMode.get();
-    }
-
-    @Override
-    public void setWallpaper(byte[] image) {
-        try (var arena = Arena.ofConfined()) {
-            var wallpaperFile = Files.createTempFile("wallhaven", ".image");
-            Files.write(wallpaperFile, image);
-            var nativeFilePath = arena.allocateFrom(wallpaperFile.toString());
-            var result = (boolean)systemParametersInfoAFunction.invokeExact(
-                    SPI_SETDESKWALLPAPER,
-                    0,
-                    nativeFilePath,
-                    SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
-            );
-            if (!result) {
-                throw new IllegalStateException("Unable to set the wallpaper");
-            }
-        } catch (Error | RuntimeException t) {
-            throw t;
-        } catch (Throwable t) {
-            throw new RuntimeException(t);
-        }
     }
 
     private static boolean queryDarkMode() {
@@ -73,6 +42,28 @@ public final class Windows implements OperatingSystem {
                 throw new IllegalStateException("RegGetValueW failed: " + errorCode);
             }
             return data.get(C_INT, 0) == 0;
+        }
+    }
+
+    @Override
+    public void setWallpaper(byte[] image) {
+        Path wallpaperFile;
+        try {
+            wallpaperFile = Files.createTempFile("wallhaven", ".image");
+            Files.write(wallpaperFile, image);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        try (var arena = Arena.ofConfined()) {
+            var result = SystemParametersInfoW(
+                    SPI_SETDESKWALLPAPER(),
+                    0,
+                    arena.allocateFrom(wallpaperFile.toString(), UTF_16LE),
+                    SPIF_UPDATEINIFILE() | SPIF_SENDCHANGE()
+            );
+            if (result == 0) {
+                throw new IllegalStateException("Unable to set the wallpaper");
+            }
         }
     }
 }
