@@ -22,7 +22,10 @@ public final class WallhavenClient implements AutoCloseable {
     private static final int MAX_REQUESTS_PER_SEC = 45;
     private static final int DARK_MODE_BRIGHTNESS_LIMIT = 50;
 
-    private static final DisplayMode displayMode = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode();
+    private static final DisplayMode displayMode = GraphicsEnvironment
+            .getLocalGraphicsEnvironment()
+            .getDefaultScreenDevice()
+            .getDisplayMode();
 
     private final HttpClient httpClient;
     private final String q;
@@ -52,7 +55,7 @@ public final class WallhavenClient implements AutoCloseable {
             url.append("&seed=").append(meta.seed());
         }
 
-        byte[] bytes = httpGet(URI.create(url.toString()));
+        var bytes = httpGet(URI.create(url.toString()));
         var result = Main.jsonMapper.readValue(bytes, RestApi.SearchResult.class);
         meta = result.meta();
         if (result.data() == null) {
@@ -67,7 +70,7 @@ public final class WallhavenClient implements AutoCloseable {
     }
 
     WallpaperAndData getMatchingWallpaper(String id) throws IOException, InterruptedException {
-        RestApi.Wallpaper wallpaper = getWallpaper(id);
+        var wallpaper = getWallpaper(id);
         var matching = wallpaper
                 .tags()
                 .stream()
@@ -79,11 +82,13 @@ public final class WallhavenClient implements AutoCloseable {
             Main.logger.info("{} does not match", wallpaper.url());
             return null;
         }
-        byte[] bytes = httpGet(wallpaper.path());
-        var image = ImageIO.read(new ByteArrayInputStream(bytes));
-        if (OS.isDarkMode() && calculateBrightness(image) > DARK_MODE_BRIGHTNESS_LIMIT) {
-            Main.logger.info("{} too bright for dark mode ({})", wallpaper.url(), calculateBrightness(image));
-            return null;
+        var bytes = httpGet(wallpaper.path());
+        if (OS.isDarkMode()) {
+            var brightness = calculateBrightness(ImageIO.read(new ByteArrayInputStream(bytes)));
+            if (brightness > DARK_MODE_BRIGHTNESS_LIMIT) {
+                Main.logger.info("{} too bright for dark mode ({})", wallpaper.url(), brightness);
+                return null;
+            }
         }
         return new WallpaperAndData(wallpaper, bytes);
     }

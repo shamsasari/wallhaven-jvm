@@ -16,14 +16,19 @@ java {
 }
 
 tasks.withType<JavaCompile> {
-    options.compilerArgs = listOf("--enable-preview")
+    options.compilerArgs = listOf(
+        "--enable-preview",
+        "-parameters"
+    )
 }
 
 application {
     mainClass = "shamsasari.wallhaven.Main"
     applicationDefaultJvmArgs = listOf(
         "--enable-preview",
-        "--enable-native-access=ALL-UNNAMED"
+        "--enable-native-access=ALL-UNNAMED",
+        "--illegal-final-field-mutation=deny",
+        "-XX:+UseCompactObjectHeaders",
     )
 }
 

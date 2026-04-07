@@ -41,15 +41,7 @@ class Main {
     }
 
     private void run() throws IOException, InterruptedException {
-        var configFile = appHomeDir.resolve("wallhaven-plugin.json");
-        JsonNode config;
-        if (Files.exists(configFile)) {
-            config = jsonMapper.readTree(configFile);
-        } else {
-            Files.createFile(configFile);
-            config = jsonMapper.createObjectNode();
-        }
-
+        var config = parseConfig();
         var q = config.path("q").stringValue(null);
         var excludeSimilarTags = config.path("excludeSimilarTags")
                 .valueStream()
@@ -66,14 +58,26 @@ class Main {
         logger.info("Wallpaper changed to {} {} ({}ms)", matching.wallpaper().url(), matching.wallpaper().tags(), upTime);
     }
 
+    private static JsonNode parseConfig() throws IOException {
+        var configFile = appHomeDir.resolve("wallhaven-plugin.json");
+        JsonNode config;
+        if (Files.exists(configFile)) {
+            config = jsonMapper.readTree(configFile);
+        } else {
+            Files.createFile(configFile);
+            config = jsonMapper.createObjectNode();
+        }
+        return config;
+    }
+
     private WallpaperAndData getMatchingWallpaper(String q, List<String> excludeSimilarTags) throws IOException, InterruptedException {
-        try (var wallpaperFetcher = new WallhavenClient(q, excludeSimilarTags)) {
+        try (var client = new WallhavenClient(q, excludeSimilarTags)) {
             while (true) {
-                List<WallpaperInfo> wallpaperInfos = wallpaperFetcher.getNextPage();
-                if (wallpaperInfos == null) {
+                var page = client.getNextPage();
+                if (page == null) {
                     return null;
                 }
-                var matching = getMatchingWallpaperFromPage(wallpaperInfos, wallpaperFetcher);
+                var matching = getMatchingWallpaperFromPage(page, client);
                 if (matching != null) {
                     return matching;
                 }
@@ -81,7 +85,7 @@ class Main {
         }
     }
 
-    private WallpaperAndData getMatchingWallpaperFromPage(List<WallpaperInfo> wallpaperInfos,
+    private WallpaperAndData getMatchingWallpaperFromPage(List<WallpaperInfo> page,
                                                           WallhavenClient client) throws InterruptedException {
         class NonMatchingWallpaper extends Exception {}
 
@@ -89,7 +93,7 @@ class Main {
                 Joiner.<WallpaperAndData>anySuccessfulOrThrow(),
                 config -> config.withThreadFactory(Thread.ofVirtual().name("fetcher", 0).factory())
         )) {
-            for (var wallpaperInfo : wallpaperInfos) {
+            for (var wallpaperInfo : page) {
                 taskScope.fork(() -> {
                     var wallpaper = client.getMatchingWallpaper(wallpaperInfo.id());
                     if (wallpaper != null) {
