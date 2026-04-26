@@ -2,6 +2,7 @@ plugins {
     application
     id("de.infolektuell.jextract") version "1.4.0"
     id("com.gradleup.shadow") version "9.4.1"
+    id("org.beryx.jlink") version "4.0.0"
     id("com.github.ben-manes.versions") version "0.53.0"
 }
 
@@ -18,23 +19,8 @@ java {
 tasks.withType<JavaCompile> {
     options.compilerArgs = listOf(
         "--enable-preview",
-        "-parameters"
+        "-parameters",
     )
-}
-
-application {
-    mainClass = "com.hibzahim.wallcycle.Main"
-    applicationDefaultJvmArgs = listOf(
-        "--enable-preview",
-        "--enable-native-access=ALL-UNNAMED",
-        "--illegal-final-field-mutation=deny",
-        "-XX:+UseCompactObjectHeaders",
-    )
-}
-
-dependencies {
-    implementation("org.apache.logging.log4j:log4j-core:2.25.2")
-    implementation("tools.jackson.core:jackson-databind:3.1.1")
 }
 
 jextract {
@@ -58,5 +44,27 @@ jextract {
         sourceSets.main {
             jextract.libraries.addLater(windows)
         }
+    }
+}
+
+dependencies {
+    implementation("org.apache.logging.log4j:log4j-core:2.25.2")
+    implementation("tools.jackson.core:jackson-databind:3.1.1")
+}
+
+application {
+    mainModule = "com.hibzahim.wallcycle"
+    mainClass = "com.hibzahim.wallcycle.Main"
+    applicationDefaultJvmArgs = listOf(
+        "--enable-preview",
+        "--enable-native-access=${mainModule.get()}",
+        "--illegal-final-field-mutation=deny",
+        "-XX:+UseCompactObjectHeaders",
+    )
+}
+
+jlink {
+    launcher {
+        noConsole = true
     }
 }
