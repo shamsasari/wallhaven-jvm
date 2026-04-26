@@ -1,6 +1,6 @@
-package shamsasari.wallhaven;
+package com.hibzahim.wallcycle;
 
-import shamsasari.wallhaven.RestApi.WallpaperAndData;
+import com.hibzahim.wallcycle.RestApi.WallpaperAndData;
 
 import javax.imageio.ImageIO;
 import java.awt.*;
@@ -16,7 +16,7 @@ import java.util.List;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
-import static shamsasari.wallhaven.Main.OS;
+import static com.hibzahim.wallcycle.Main.OS;
 
 public final class WallhavenClient implements AutoCloseable {
     private static final int MAX_REQUESTS_PER_SEC = 45;

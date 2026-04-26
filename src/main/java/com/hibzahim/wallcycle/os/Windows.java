@@ -1,4 +1,4 @@
-package shamsasari.wallhaven.os;
+package com.hibzahim.wallcycle.os;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -7,8 +7,8 @@ import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static com.hibzahim.wallcycle.os.WindowsBinding.*;
 import static java.nio.charset.StandardCharsets.UTF_16LE;
-import static shamsasari.wallhaven.os.WindowsBinding.*;
 
 @SuppressWarnings("preview")
 public final class Windows implements OperatingSystem {
@@ -49,7 +49,7 @@ public final class Windows implements OperatingSystem {
     public void setWallpaper(byte[] image) {
         Path wallpaperFile;
         try {
-            wallpaperFile = Files.createTempFile("wallhaven", ".image");
+            wallpaperFile = Files.createTempFile("wallcycle", ".image");
             Files.write(wallpaperFile, image);
         } catch (IOException e) {
             throw new UncheckedIOException(e);

@@ -1,4 +1,4 @@
-package shamsasari.wallhaven.os;
+package com.hibzahim.wallcycle.os;
 
 public sealed interface OperatingSystem permits Windows {
     boolean isDarkMode();

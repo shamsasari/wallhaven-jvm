@@ -23,7 +23,7 @@ tasks.withType<JavaCompile> {
 }
 
 application {
-    mainClass = "shamsasari.wallhaven.Main"
+    mainClass = "com.hibzahim.wallcycle.Main"
     applicationDefaultJvmArgs = listOf(
         "--enable-preview",
         "--enable-native-access=ALL-UNNAMED",
@@ -53,7 +53,7 @@ jextract {
                 )
             }
             headerClassName = "WindowsBinding"
-            targetPackage = "shamsasari.wallhaven.os"
+            targetPackage = "com.hibzahim.wallcycle.os"
         }
         sourceSets.main {
             jextract.libraries.addLater(windows)

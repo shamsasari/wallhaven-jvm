@@ -1,11 +1,11 @@
-package shamsasari.wallhaven;
+package com.hibzahim.wallcycle;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import shamsasari.wallhaven.RestApi.WallpaperAndData;
-import shamsasari.wallhaven.RestApi.WallpaperInfo;
-import shamsasari.wallhaven.os.OperatingSystem;
-import shamsasari.wallhaven.os.Windows;
+import com.hibzahim.wallcycle.RestApi.WallpaperAndData;
+import com.hibzahim.wallcycle.RestApi.WallpaperInfo;
+import com.hibzahim.wallcycle.os.OperatingSystem;
+import com.hibzahim.wallcycle.os.Windows;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy;
 import tools.jackson.databind.json.JsonMapper;

@@ -1,4 +1,4 @@
-package shamsasari.wallhaven;
+package com.hibzahim.wallcycle;
 
 import javax.annotation.Nonnull;
 import java.net.URI;

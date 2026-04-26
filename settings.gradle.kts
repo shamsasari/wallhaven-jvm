@@ -1,4 +1,4 @@
-rootProject.name = "wallhaven-jvm"
+rootProject.name = "wallcycle"
 
 plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
