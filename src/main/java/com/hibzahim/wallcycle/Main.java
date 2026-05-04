@@ -1,29 +1,35 @@
 package com.hibzahim.wallcycle;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import com.hibzahim.wallcycle.RestApi.WallpaperAndData;
-import com.hibzahim.wallcycle.RestApi.WallpaperInfo;
 import com.hibzahim.wallcycle.os.OperatingSystem;
 import com.hibzahim.wallcycle.os.Windows;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import tools.jackson.databind.json.JsonMapper;
 
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.lang.management.ManagementFactory;
-import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.concurrent.StructuredTaskScope.Joiner;
 
+import static tools.jackson.core.StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION;
+
 @SuppressWarnings("preview")
 class Main {
-    private static final Path appHomeDir = Path.of(System.getProperty("user.home")).resolve("wallhaven-plugin");
+    private static final int DARK_MODE_BRIGHTNESS_LIMIT = 50;
 
-    public static final OperatingSystem OS = new Windows();
-    public static final JsonMapper jsonMapper = JsonMapper.builder().propertyNamingStrategy(new SnakeCaseStrategy()).build();
+    private static final Path appHomeDir = Path.of(System.getProperty("user.home")).resolve("wallhaven-plugin");
+    private static final DisplayMode displayMode = GraphicsEnvironment
+            .getLocalGraphicsEnvironment()
+            .getDefaultScreenDevice()
+            .getDisplayMode();
+    private static final OperatingSystem OS = new Windows();
+
     public static final Logger logger;
 
     static {
@@ -35,80 +41,71 @@ class Main {
         try {
             run();
         } catch (Throwable t) {
-            logger.fatal("Unable to update wallpaper", t);
+            logger.fatal("Wallcycle has crashed", t);
             System.exit(1);
         }
     }
 
     private void run() throws IOException, InterruptedException {
-        var config = parseConfig();
-        var q = config.path("q").stringValue(null);
-        var excludeSimilarTags = config.path("excludeSimilarTags")
-                .valueStream()
-                .map(tag -> tag.stringValue().toLowerCase())
+        logger.info("Started Wallcycle");
+        var config = JsonMapper
+                .builder()
+                .enable(INCLUDE_SOURCE_IN_LOCATION)
+                .build()
+                .readValue(appHomeDir.resolve("wallhaven-plugin.json"), Config.class);
+        var changeInterval = Duration.ofMinutes(config.changeMins);
+        var excludeSimilarTags = config
+                .excludeSimilarTags
+                .stream()
+                .map(String::toLowerCase)
                 .toList();
-
-        var matching = getMatchingWallpaper(q, excludeSimilarTags);
-        if (matching == null) {
-            logger.warn("No results");
-            return;
-        }
-        OS.setWallpaper(matching.data());
-        var upTime = ManagementFactory.getRuntimeMXBean().getUptime();
-        logger.info("Wallpaper changed to {} {} ({}ms)", matching.wallpaper().url(), matching.wallpaper().tags(), upTime);
-    }
-
-    private static JsonNode parseConfig() throws IOException {
-        var configFile = appHomeDir.resolve("wallhaven-plugin.json");
-        JsonNode config;
-        if (Files.exists(configFile)) {
-            config = jsonMapper.readTree(configFile);
-        } else {
-            Files.createFile(configFile);
-            config = jsonMapper.createObjectNode();
-        }
-        return config;
-    }
-
-    private WallpaperAndData getMatchingWallpaper(String q, List<String> excludeSimilarTags) throws IOException, InterruptedException {
-        try (var client = new WallhavenClient(q, excludeSimilarTags)) {
+        WallhavenClient.Meta previousMeta = null;
+        try (var client = new WallhavenClient()) {
             while (true) {
-                var page = client.getNextPage();
-                if (page == null) {
-                    return null;
+                if (previousMeta != null && previousMeta.isLastPage()) {
+                    previousMeta = null;
+                    logger.info("Ran out of pages, restarting from the beginning");
                 }
-                var matching = getMatchingWallpaperFromPage(page, client);
+                var pageResult = client.getRandomPage(
+                        displayMode.getWidth(),
+                        displayMode.getHeight(),
+                        previousMeta != null ? previousMeta.currentPage() + 1 : 1,
+                        null,
+                        previousMeta != null ? previousMeta.seed() : null
+                );
+                previousMeta = pageResult.meta();
+                var matching = findMatchingWallpaper(client, pageResult.data(), excludeSimilarTags);
                 if (matching != null) {
-                    return matching;
+                    OS.setWallpaper(matching.data());
+                    logger.info("Wallpaper changed to {} ({})", matching.wallpaper().url(), matching.wallpaper().tags());
+                    Thread.sleep(changeInterval);
+                } else {
+                    logger.info("No matching wallpaper, searching next page");
                 }
             }
         }
     }
 
-    private WallpaperAndData getMatchingWallpaperFromPage(List<WallpaperInfo> page,
-                                                          WallhavenClient client) throws InterruptedException {
+    private WallpaperAndData findMatchingWallpaper(WallhavenClient client,
+                                                   List<WallhavenClient.PageEntry> pageEntries,
+                                                   List<String> excludeSimilarTags) throws InterruptedException {
         class NonMatchingWallpaper extends Exception {}
 
-        try (var taskScope = StructuredTaskScope.open(
-                Joiner.<WallpaperAndData>anySuccessfulOrThrow(),
-                config -> config.withThreadFactory(Thread.ofVirtual().name("fetcher", 0).factory())
-        )) {
-            for (var wallpaperInfo : page) {
+        try (var taskScope = StructuredTaskScope.open(Joiner.<WallpaperAndData>anySuccessfulOrThrow())) {
+            for (var pageEntry : pageEntries) {
                 taskScope.fork(() -> {
-                    var wallpaper = client.getMatchingWallpaper(wallpaperInfo.id());
+                    var wallpaper = getMatchingWallpaper(client, pageEntry.id(), excludeSimilarTags);
                     if (wallpaper != null) {
                         return wallpaper;
                     }
                     throw new NonMatchingWallpaper();
                 });
             }
-
             try {
                 return taskScope.join();
             } catch (StructuredTaskScope.FailedException e) {
                 switch (e.getCause()) {
                     case NonMatchingWallpaper _ -> {
-                        logger.info("No matching wallpaper, searching next page...");
                         return null;
                     }
                     case null, default -> throw e;
@@ -116,4 +113,60 @@ class Main {
             }
         }
     }
+
+    private WallpaperAndData getMatchingWallpaper(
+            WallhavenClient client,
+            String id,
+            List<String> excludeSimilarTags
+    ) throws IOException, InterruptedException {
+        var wallpaper = client.getWallpaper(id);
+        var matching = wallpaper
+                .tags()
+                .stream()
+                .allMatch(tag -> {
+                    var normalisedTag = tag.name().toLowerCase();
+                    return excludeSimilarTags.stream().noneMatch(normalisedTag::contains);
+                });
+        if (!matching) {
+            logger.info("{} does not match", wallpaper.url());
+            return null;
+        }
+        var bytes = client.httpGet(wallpaper.path());
+        if (OS.isDarkMode()) {
+            var brightness = calculateBrightness(ImageIO.read(new ByteArrayInputStream(bytes)));
+            if (brightness > DARK_MODE_BRIGHTNESS_LIMIT) {
+                logger.info("{} too bright for dark mode ({})", wallpaper.url(), brightness);
+                return null;
+            }
+        }
+        return new WallpaperAndData(wallpaper, bytes);
+    }
+
+    private static int calculateBrightness(BufferedImage image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        long totalBrightness = 0;
+        int pixelCount = width * height;
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int rgb = image.getRGB(x, y);
+
+                // Extract RGB components
+                int red = (rgb >> 16) & 0xFF;
+                int green = (rgb >> 8) & 0xFF;
+                int blue = rgb & 0xFF;
+
+                // Calculate luminance using standard formula
+                int luminance = (int)(0.299 * red + 0.587 * green + 0.114 * blue);
+                totalBrightness += luminance;
+            }
+        }
+
+        return (int)(totalBrightness / pixelCount);
+    }
+
+    private record WallpaperAndData(WallhavenClient.Wallpaper wallpaper, byte[] data) {}
+
+    private record Config(int changeMins, List<String> excludeSimilarTags) { }
 }

@@ -10,33 +10,32 @@ import java.nio.file.Path;
 import static com.hibzahim.wallcycle.os.WindowsBinding.*;
 import static java.nio.charset.StandardCharsets.UTF_16LE;
 
-@SuppressWarnings("preview")
 public final class Windows implements OperatingSystem {
     static {
         System.loadLibrary("Advapi32");
         System.loadLibrary("user32");
     }
 
-    private static final LazyConstant<Boolean> isDarkMode = LazyConstant.of(Windows::queryDarkMode);
+    private static final MemorySegment KEY = Arena.global().allocateFrom("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", UTF_16LE);
+    private static final MemorySegment VALUE = Arena.global().allocateFrom("SystemUsesLightTheme", UTF_16LE);
+    private static final MemorySegment CB_DATA = Arena.global().allocate(C_INT);
+
+    static {
+        CB_DATA.set(C_INT, 0, (int)C_INT.byteSize());
+    }
 
     @Override
     public boolean isDarkMode() {
-        return isDarkMode.get();
-    }
-
-    private static boolean queryDarkMode() {
         try (var arena = Arena.ofConfined()) {
             var data = arena.allocate(C_INT);
-            var cbData = arena.allocate(C_INT);
-            cbData.set(C_INT, 0, (int)data.byteSize());
             var errorCode = RegGetValueW(
                     HKEY_CURRENT_USER(),
-                    arena.allocateFrom("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", UTF_16LE),
-                    arena.allocateFrom("SystemUsesLightTheme", UTF_16LE),
+                    KEY,
+                    VALUE,
                     RRF_RT_REG_DWORD(),
                     MemorySegment.NULL,
                     data,
-                    cbData
+                    CB_DATA
             );
             if (errorCode != ERROR_SUCCESS()) {
                 throw new IllegalStateException("RegGetValueW failed: " + errorCode);

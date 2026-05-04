@@ -1,99 +1,69 @@
 package com.hibzahim.wallcycle;
 
-import com.hibzahim.wallcycle.RestApi.WallpaperAndData;
+import io.github.bucket4j.Bucket;
+import tools.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy;
+import tools.jackson.databind.json.JsonMapper;
 
-import javax.imageio.ImageIO;
-import java.awt.*;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
+import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpResponse.BodyHandlers;
 import java.util.List;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.time.Duration.ofMinutes;
 import static java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor;
-import static com.hibzahim.wallcycle.Main.OS;
 
 public final class WallhavenClient implements AutoCloseable {
-    private static final int MAX_REQUESTS_PER_SEC = 45;
-    private static final int DARK_MODE_BRIGHTNESS_LIMIT = 50;
+    private static final int MAX_REQUESTS_PER_MIN = 45;
+    private static final int DEFAULT_RETRY_AFTER_SECS = 10;
 
-    private static final DisplayMode displayMode = GraphicsEnvironment
-            .getLocalGraphicsEnvironment()
-            .getDefaultScreenDevice()
-            .getDisplayMode();
+    private static final JsonMapper jsonMapper = JsonMapper
+            .builder()
+            .propertyNamingStrategy(new SnakeCaseStrategy())
+            .build();
+    private static final Bucket rateLimitingBucket = Bucket
+            .builder()
+            .addLimit((bandwidth) ->
+                    bandwidth.capacity(MAX_REQUESTS_PER_MIN).refillIntervally(MAX_REQUESTS_PER_MIN, ofMinutes(1))
+            )
+            .build();
 
-    private final HttpClient httpClient;
-    private final String q;
-    private final List<String> excludeSimilarTags;
+    private final HttpClient httpClient = HttpClient.newBuilder().executor(newVirtualThreadPerTaskExecutor()).build();
+
     private volatile long backoffUntil;
-    private RestApi.Meta meta;
 
-    WallhavenClient(String q, List<String> excludeSimilarTags) {
-        httpClient = HttpClient.newBuilder().executor(newVirtualThreadPerTaskExecutor()).build();
-        this.q = q;
-        this.excludeSimilarTags = excludeSimilarTags;
-    }
-
-    List<RestApi.WallpaperInfo> getNextPage() throws IOException, InterruptedException {
-        var page = meta != null ? meta.currentPage() + 1 : 1;
-        if (meta != null && page > meta.lastPage()) {
-            return null;
+    public PageResult getRandomPage(int atleastWidth,
+                                    int atleastHeight,
+                                    int page,
+                                    String q,
+                                    String seed) throws IOException, InterruptedException {
+        if (page < 1) {
+            throw new IllegalArgumentException();
         }
-
-        var url = new StringBuilder("https://wallhaven.cc/api/v1/search?sorting=random&atleast=")
-                .append(displayMode.getWidth()).append('x').append(displayMode.getHeight())
+        var urlBuilder = new StringBuilder("https://wallhaven.cc/api/v1/search?sorting=random&atleast=")
+                .append(atleastWidth).append('x').append(atleastHeight)
                 .append("&page=").append(page);
         if (q != null) {
-            url.append("&q=").append(URLEncoder.encode(q, UTF_8));
+            urlBuilder.append("&q=").append(URLEncoder.encode(q, UTF_8));
         }
-        if (meta != null) {
-            url.append("&seed=").append(meta.seed());
+        if (seed != null) {
+            urlBuilder.append("&seed=").append(seed);
         }
-
-        var bytes = httpGet(URI.create(url.toString()));
-        var result = Main.jsonMapper.readValue(bytes, RestApi.SearchResult.class);
-        meta = result.meta();
-        if (result.data() == null) {
-            return null;
-        }
-        return result.data();
+        var bytes = httpGet(URI.create(urlBuilder.toString()));
+        return jsonMapper.readValue(bytes, PageResult.class);
     }
 
-    RestApi.Wallpaper getWallpaper(String id) throws IOException, InterruptedException {
+    public Wallpaper getWallpaper(String id) throws IOException, InterruptedException {
         var bytes = httpGet(URI.create("https://wallhaven.cc/api/v1/w/" + id));
-        return Main.jsonMapper.readValue(bytes, RestApi.WallpaperResult.class).data();
+        return jsonMapper.readValue(bytes, WallpaperResult.class).data();
     }
 
-    WallpaperAndData getMatchingWallpaper(String id) throws IOException, InterruptedException {
-        var wallpaper = getWallpaper(id);
-        var matching = wallpaper
-                .tags()
-                .stream()
-                .allMatch(tag -> {
-                    var normalisedTag = tag.name().toLowerCase();
-                    return excludeSimilarTags.stream().noneMatch(normalisedTag::contains);
-                });
-        if (!matching) {
-            Main.logger.info("{} does not match", wallpaper.url());
-            return null;
-        }
-        var bytes = httpGet(wallpaper.path());
-        if (OS.isDarkMode()) {
-            var brightness = calculateBrightness(ImageIO.read(new ByteArrayInputStream(bytes)));
-            if (brightness > DARK_MODE_BRIGHTNESS_LIMIT) {
-                Main.logger.info("{} too bright for dark mode ({})", wallpaper.url(), brightness);
-                return null;
-            }
-        }
-        return new WallpaperAndData(wallpaper, bytes);
-    }
-
-    private byte[] httpGet(URI url) throws IOException, InterruptedException {
+    public byte[] httpGet(URI url) throws IOException, InterruptedException {
         while (true) {
             var response = rawHttpGet(url);
             switch (response.statusCode()) {
@@ -101,8 +71,7 @@ public final class WallhavenClient implements AutoCloseable {
                     return response.body();
                 }
                 case 429 -> throttle(response);
-                default ->
-                        throw new IOException("Received error code " + response.statusCode() + ": " + response.headers());
+                default -> throw new IOException("Received error code " + response.statusCode() + ": " + response.headers());
             }
         }
     }
@@ -112,12 +81,13 @@ public final class WallhavenClient implements AutoCloseable {
         if (backOffDelay > 0) {
             Thread.sleep(backOffDelay);
         }
+        rateLimitingBucket.asBlocking().consume(1);
         Main.logger.debug("GET: {}", url);
-        return httpClient.send(HttpRequest.newBuilder(url).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+        return httpClient.send(HttpRequest.newBuilder(url).GET().build(), BodyHandlers.ofByteArray());
     }
 
     private void throttle(HttpResponse<?> response) {
-        var retryAfterSecs = response.headers().firstValueAsLong("retry-after").orElse(MAX_REQUESTS_PER_SEC);
+        var retryAfterSecs = response.headers().firstValueAsLong("retry-after").orElse(DEFAULT_RETRY_AFTER_SECS);
         var retryAfterMillis = retryAfterSecs * 1000;
         backoffUntil = System.currentTimeMillis() + retryAfterMillis;
         Main.logger.warn("Throttled, trying again after {}s", retryAfterSecs);
@@ -128,27 +98,42 @@ public final class WallhavenClient implements AutoCloseable {
         httpClient.close();
     }
 
-    private static int calculateBrightness(BufferedImage image) {
-        int width = image.getWidth();
-        int height = image.getHeight();
-        long totalBrightness = 0;
-        int pixelCount = width * height;
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int rgb = image.getRGB(x, y);
-
-                // Extract RGB components
-                int red = (rgb >> 16) & 0xFF;
-                int green = (rgb >> 8) & 0xFF;
-                int blue = rgb & 0xFF;
-
-                // Calculate luminance using standard formula
-                int luminance = (int)(0.299 * red + 0.587 * green + 0.114 * blue);
-                totalBrightness += luminance;
-            }
+    public record PageResult(List<PageEntry> data, Meta meta) {
+        public PageResult {
+            data = List.copyOf(data);
         }
-
-        return (int)(totalBrightness / pixelCount);
     }
+
+    public record PageEntry(String id, URI url, URI path) {}
+
+    public record Meta(
+            int currentPage,
+            int lastPage,
+            String seed
+    ) {
+        public boolean isLastPage() {
+            return currentPage == lastPage;
+        }
+    }
+
+    public record Wallpaper(
+            String id,
+            URI url,
+            URI path,
+            List<Tag> tags
+    ) {
+        public Wallpaper {
+            tags = List.copyOf(tags);
+        }
+    }
+
+    public record Tag(String name) {
+        @Nonnull
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    private record WallpaperResult(Wallpaper data) {}
 }
