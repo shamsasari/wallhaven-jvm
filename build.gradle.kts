@@ -1,6 +1,11 @@
+import net.ltgt.gradle.errorprone.errorprone
+import net.ltgt.gradle.nullaway.nullaway
+
 plugins {
     application
     id("de.infolektuell.jextract") version "1.4.0"
+    id("net.ltgt.errorprone") version "5.1.0"
+    id("net.ltgt.nullaway") version "3.0.0"
     id("com.gradleup.shadow") version "9.4.1"
     id("org.beryx.jlink") version "4.0.0"
     id("com.github.ben-manes.versions") version "0.53.0"
@@ -21,6 +26,18 @@ tasks.withType<JavaCompile> {
         "--enable-preview",
         "-parameters",
     )
+    // Only run NullAway
+    options.errorprone {
+        disableAllChecks = true
+        nullaway {
+            error()
+        }
+    }
+}
+
+nullaway {
+    onlyNullMarked = true
+    jspecifyMode = true
 }
 
 jextract {
@@ -48,9 +65,13 @@ jextract {
 }
 
 dependencies {
+    errorprone("com.uber.nullaway:nullaway:0.13.4")
+    errorprone("com.google.errorprone:error_prone_core:2.49.0")
+
     implementation("org.apache.logging.log4j:log4j-core:2.25.4")
     implementation("tools.jackson.core:jackson-databind:3.1.1")
     implementation("com.bucket4j:bucket4j_jdk17-core:8.18.0")
+    implementation("org.jspecify:jspecify:1.0.0")
 
     testImplementation(platform("org.junit:junit-bom:6.0.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")

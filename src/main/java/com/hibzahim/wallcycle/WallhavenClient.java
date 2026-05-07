@@ -1,10 +1,10 @@
 package com.hibzahim.wallcycle;
 
 import io.github.bucket4j.Bucket;
+import org.jspecify.annotations.Nullable;
 import tools.jackson.databind.PropertyNamingStrategies.SnakeCaseStrategy;
 import tools.jackson.databind.json.JsonMapper;
 
-import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -40,8 +40,8 @@ public final class WallhavenClient implements AutoCloseable {
     public PageResult getRandomPage(int atleastWidth,
                                     int atleastHeight,
                                     int page,
-                                    String q,
-                                    String seed) throws IOException, InterruptedException {
+                                    @Nullable String q,
+                                    @Nullable String seed) throws IOException, InterruptedException {
         if (page < 1) {
             throw new IllegalArgumentException();
         }
@@ -128,7 +128,6 @@ public final class WallhavenClient implements AutoCloseable {
     }
 
     public record Tag(String name) {
-        @Nonnull
         @Override
         public String toString() {
             return name;

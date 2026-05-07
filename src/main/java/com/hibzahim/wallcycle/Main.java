@@ -1,9 +1,11 @@
 package com.hibzahim.wallcycle;
 
+import com.hibzahim.wallcycle.WallhavenClient.Wallpaper;
 import com.hibzahim.wallcycle.os.OperatingSystem;
 import com.hibzahim.wallcycle.os.Windows;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.jspecify.annotations.Nullable;
 import tools.jackson.databind.json.JsonMapper;
 
 import javax.imageio.ImageIO;
@@ -86,6 +88,7 @@ class Main {
         }
     }
 
+    @Nullable
     private WallpaperAndData findMatchingWallpaper(WallhavenClient client,
                                                    List<WallhavenClient.PageEntry> pageEntries,
                                                    List<String> excludeSimilarTags) throws InterruptedException {
@@ -114,6 +117,7 @@ class Main {
         }
     }
 
+    @Nullable
     private WallpaperAndData getMatchingWallpaper(
             WallhavenClient client,
             String id,
@@ -166,7 +170,7 @@ class Main {
         return (int)(totalBrightness / pixelCount);
     }
 
-    private record WallpaperAndData(WallhavenClient.Wallpaper wallpaper, byte[] data) {}
+    private record WallpaperAndData(Wallpaper wallpaper, byte[] data) {}
 
     private record Config(int changeMins, List<String> excludeSimilarTags) { }
 }
